@@ -35,93 +35,217 @@ const GAMES = LOTTERY_DATA.map(g => {
   return { ...g, prizesLeft: left, pctLeft: pct };
 });
 
-// Build lookup by game number
 const GAME_MAP = new Map();
 GAMES.forEach(g => {
   if (!GAME_MAP.has(g["Game Number"])) GAME_MAP.set(g["Game Number"], []);
   GAME_MAP.get(g["Game Number"]).push(g);
 });
 
-// Build name-based index: normalized tokens per game for fuzzy matching
+// Deduplicated games for search
+const UNIQUE_GAMES = [];
+const _seen = new Set();
+GAMES.forEach(g => {
+  if (!_seen.has(g["Game Number"])) { _seen.add(g["Game Number"]); UNIQUE_GAMES.push(g); }
+});
+
+// ── Smart Matching Engine ──
+// Handles stylized lottery ticket text from vending machine photos
+
 function normalize(str) {
-  return str.toLowerCase()
-    .replace(/[$,!.'&]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return str.toLowerCase().replace(/[$,!.'&\*\#]/g, "").replace(/\s+/g, " ").trim();
 }
 
 function tokenize(str) {
   return normalize(str).split(" ").filter(t => t.length > 0);
 }
 
-// Deduplicate games by Game Number for name search (group prize tiers)
-const UNIQUE_GAMES = [];
-const seenNums = new Set();
-GAMES.forEach(g => {
-  if (!seenNums.has(g["Game Number"])) {
-    seenNums.add(g["Game Number"]);
-    UNIQUE_GAMES.push(g);
-  }
+// Build TF-IDF-like word weights: rare words across game names are more valuable
+const WORD_FREQ = {};
+UNIQUE_GAMES.forEach(g => {
+  const tokens = new Set(tokenize(g["Game Name"]));
+  tokens.forEach(t => { WORD_FREQ[t] = (WORD_FREQ[t] || 0) + 1; });
 });
+const TOTAL_GAMES = UNIQUE_GAMES.length;
+// Stop words that appear in many names and carry little signal
+const STOP_WORDS = new Set(["the", "a", "of", "and", "or", "for", "to", "in"]);
 
-// Fuzzy match: score how well OCR text matches a game name
-function fuzzyScore(ocrText, gameName) {
+function wordWeight(token) {
+  if (STOP_WORDS.has(token)) return 0.1;
+  const freq = WORD_FREQ[token] || 0;
+  if (freq === 0) return 1.0;
+  if (freq === 1) return 3.0;  // unique to one game = very high signal
+  if (freq === 2) return 2.0;
+  if (freq <= 4) return 1.5;
+  if (freq <= 8) return 1.0;
+  return 0.5; // very common word like "bucks", "money", "cash"
+}
+
+// Extract multiplier patterns like "500X", "200x", "100X" etc.
+function extractMultipliers(text) {
+  const norm = text.replace(/\n/g, " ");
+  const matches = [];
+  // Match patterns like 500X, 500x, 500 X, SOOx (OCR for 500x) etc.
+  const re = /\b(\d{1,3})\s*[xX]\b/g;
+  let m;
+  while ((m = re.exec(norm)) !== null) {
+    matches.push(parseInt(m[1], 10));
+  }
+  // Also try reversed: X500, x50
+  const re2 = /[xX]\s*(\d{1,3})\b/g;
+  while ((m = re2.exec(norm)) !== null) {
+    matches.push(parseInt(m[1], 10));
+  }
+  return [...new Set(matches)];
+}
+
+// Extract dollar amounts from OCR text
+function extractDollarAmounts(text) {
+  const amounts = [];
+  // $1,500,000 or $600 or $3,000,000 etc.
+  const re = /\$?\s*([\d,]{1,12})/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const num = parseInt(m[1].replace(/,/g, ""), 10);
+    if (num > 0) amounts.push(num);
+  }
+  return [...new Set(amounts)];
+}
+
+// Common OCR misreads on stylized lottery fonts
+function ocrVariants(token) {
+  const variants = [token];
+  // 0 <-> O/o
+  if (/0/.test(token)) variants.push(token.replace(/0/g, "o"));
+  if (/o/.test(token)) variants.push(token.replace(/o/g, "0"));
+  // 1 <-> l/I/i
+  if (/1/.test(token)) variants.push(token.replace(/1/g, "l"), token.replace(/1/g, "i"));
+  if (/l/.test(token)) variants.push(token.replace(/l/g, "1"));
+  if (/i/.test(token)) variants.push(token.replace(/i/g, "1"));
+  // 5 <-> S/s
+  if (/5/.test(token)) variants.push(token.replace(/5/g, "s"));
+  if (/s/.test(token)) variants.push(token.replace(/s/g, "5"));
+  // 8 <-> B
+  if (/8/.test(token)) variants.push(token.replace(/8/g, "b"));
+  if (/b/.test(token)) variants.push(token.replace(/b/g, "8"));
+  // x <-> X (already handled by toLowerCase, but OCR might read as k or *)
+  if (/x/.test(token)) variants.push(token.replace(/x/g, "k"), token.replace(/x/g, "*"));
+  // Common: $ read as S, 7 read as T or /, etc.
+  if (/7/.test(token)) variants.push(token.replace(/7/g, "t"));
+  // Double letters collapsed
+  if (/(.)\1/.test(token)) variants.push(token.replace(/(.)\1/g, "$1"));
+  return [...new Set(variants)];
+}
+
+// Check if a token (or OCR variant) appears in the OCR text
+function tokenInText(token, ocrNorm) {
+  // Direct match
+  if (ocrNorm.includes(token)) return 1.0;
+  // OCR variant match
+  for (const v of ocrVariants(token)) {
+    if (v !== token && ocrNorm.includes(v)) return 0.75;
+  }
+  // Substring match (at least 4 chars) - handles partial OCR reads
+  if (token.length >= 5) {
+    const sub = token.substring(0, token.length - 1);
+    if (ocrNorm.includes(sub)) return 0.6;
+    const sub2 = token.substring(1);
+    if (ocrNorm.includes(sub2)) return 0.6;
+  }
+  return 0;
+}
+
+// Main scoring function: how well does OCR text match a game?
+function scoreGame(ocrText, game) {
   const ocrNorm = normalize(ocrText);
-  const nameTokens = tokenize(gameName);
-  if (nameTokens.length === 0) return 0;
+  const name = game["Game Name"];
+  const tokens = tokenize(name);
+  if (tokens.length === 0) return 0;
 
-  let matched = 0;
-  for (const token of nameTokens) {
-    // Check if this token (or close variant) appears in OCR text
-    if (ocrNorm.includes(token)) {
-      matched++;
-    } else {
-      // Try with common OCR substitutions: 0/O, 1/I/l, 5/S, 8/B
-      const variants = [
-        token.replace(/0/g, "o"), token.replace(/o/g, "0"),
-        token.replace(/1/g, "l"), token.replace(/l/g, "1"),
-        token.replace(/5/g, "s"), token.replace(/s/g, "5"),
-      ];
-      if (variants.some(v => ocrNorm.includes(v))) matched += 0.7;
+  let weightedMatch = 0;
+  let totalWeight = 0;
+
+  for (const token of tokens) {
+    const w = wordWeight(token);
+    totalWeight += w;
+    const match = tokenInText(token, ocrNorm);
+    weightedMatch += match * w;
+  }
+
+  let score = totalWeight > 0 ? weightedMatch / totalWeight : 0;
+
+  // Bonus: multiplier pattern match (e.g., "500X" in OCR matches "500X the Money")
+  const multipliers = extractMultipliers(ocrText);
+  const nameMultRe = /(\d{1,3})\s*[xX]/;
+  const nameMultMatch = name.match(nameMultRe);
+  if (nameMultMatch && multipliers.includes(parseInt(nameMultMatch[1], 10))) {
+    score += 0.3;
+  }
+
+  // Bonus: dollar amount in game name matches OCR
+  const nameDollarRe = /\$([\d,]+)/g;
+  let dm;
+  while ((dm = nameDollarRe.exec(name)) !== null) {
+    const amt = parseInt(dm[1].replace(/,/g, ""), 10);
+    if (amt >= 100 && ocrNorm.includes(String(amt))) {
+      score += 0.15;
     }
   }
-  // Require at least 50% of significant tokens to match
-  const significantTokens = nameTokens.filter(t => t.length > 1);
-  const score = significantTokens.length > 0
-    ? matched / nameTokens.length
-    : matched / nameTokens.length;
-  return score;
+
+  // Bonus: game number found in OCR
+  const numStr = String(game["Game Number"]);
+  if (ocrNorm.includes(numStr)) {
+    score += 0.5;
+  }
+
+  // Check for distinctive multi-word phrases that are very specific
+  const phrases = [
+    "cold hard cash", "jingle jumbo", "million multiplier", "platinum premium",
+    "jumbo bucks extravaganza", "georgia millionaire", "millionaire maker",
+    "lucky love", "lucky 7 multiplier", "lucky 7 tripler", "lucky 7 doubler",
+    "giant jumbo", "600 fever", "1000 fever", "500x", "200x", "100x", "50x",
+    "millionaire jumbo", "1500000 max", "power blitz", "instant cash",
+    "xtreme bucks", "xtreme cash", "xtreme money", "vip platinum"
+  ];
+  const nameNorm = normalize(name);
+  for (const phrase of phrases) {
+    if (nameNorm.includes(phrase) && ocrNorm.includes(phrase)) {
+      score += 0.4;
+      break;
+    }
+  }
+
+  return Math.min(score, 2.0); // cap at 2.0
 }
 
 function findGamesByOCR(ocrText) {
+  const scored = UNIQUE_GAMES.map(game => ({
+    game,
+    score: scoreGame(ocrText, game),
+    allTiers: GAME_MAP.get(game["Game Number"]) || [game]
+  }));
+
+  // High confidence >= 0.5, medium >= 0.35
+  const high = scored.filter(s => s.score >= 0.5).sort((a, b) => b.score - a.score);
+  const medium = scored.filter(s => s.score >= 0.35 && s.score < 0.5).sort((a, b) => b.score - a.score);
+
   const results = [];
-  const ocrLower = normalize(ocrText);
-
-  for (const game of UNIQUE_GAMES) {
-    const name = game["Game Name"];
-    const score = fuzzyScore(ocrText, name);
-
-    // Also check if the game number appears directly
-    const numStr = String(game["Game Number"]);
-    const hasNumber = ocrLower.includes(numStr);
-
-    if (score >= 0.6 || hasNumber) {
-      const allTiers = GAME_MAP.get(game["Game Number"]) || [game];
-      results.push({ score: hasNumber ? 1.0 : score, games: allTiers });
-    }
-  }
-
-  // Sort by match quality, return unique games
-  results.sort((a, b) => b.score - a.score);
   const seen = new Set();
-  const flat = [];
-  for (const r of results) {
-    for (const g of r.games) {
-      const key = `${g["Game Number"]}-${g["Top Prize"]}`;
-      if (!seen.has(key)) { seen.add(key); flat.push(g); }
+  const addGames = (list, confidence) => {
+    for (const entry of list) {
+      for (const g of entry.allTiers) {
+        const key = `${g["Game Number"]}-${g["Top Prize"]}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          results.push({ ...g, _confidence: confidence, _score: entry.score });
+        }
+      }
     }
-  }
-  return flat;
+  };
+
+  addGames(high, "high");
+  addGames(medium, "medium");
+
+  return results;
 }
 
 // ── Utilities ──
@@ -163,25 +287,43 @@ function Header() {
     borderBottom: "1px solid #222",
     position: "sticky", top: 0, zIndex: 10
   }},
-    React.createElement("h1", { style: { fontSize: 20, fontWeight: 700, color: "#fff", letterSpacing: "-0.5px" } }, "GA Scratch-Off Scanner"),
-    React.createElement("p", { style: { fontSize: 12, color: "#888", marginTop: 2 } }, "Snap the machine or search by name")
+    React.createElement("h1", { style: { fontSize: 20, fontWeight: 700, color: "#fff", letterSpacing: "-0.5px" } },
+      "GA Scratch-Off Scanner"),
+    React.createElement("p", { style: { fontSize: 12, color: "#888", marginTop: 2 } },
+      "Snap the machine or search by name")
   );
 }
 
-function GameCard({ game, highlighted, onTap }) {
+function GameCard({ game, highlighted, onRemove }) {
   const color = getColor(game.pctLeft);
   const label = getLabel(game.pctLeft);
+  const confidence = game._confidence;
+
   return React.createElement("div", {
-    onClick: onTap,
     style: {
       background: getBgColor(game.pctLeft),
       border: highlighted ? `2px solid ${color}` : "1px solid #222",
       borderRadius: 10, padding: "12px 14px", marginBottom: 8,
-      transition: "all 0.2s", cursor: onTap ? "pointer" : "default"
+      transition: "all 0.2s", position: "relative"
     }
   },
+    // Confidence badge for scan results
+    confidence && React.createElement("div", { style: {
+      position: "absolute", top: -6, left: 12, fontSize: 9, fontWeight: 700, padding: "1px 6px",
+      borderRadius: 4, textTransform: "uppercase", letterSpacing: 0.5,
+      background: confidence === "high" ? "#22c55e" : "#eab308",
+      color: "#000"
+    }}, confidence === "high" ? "match" : "possible"),
+    // Remove button for results
+    onRemove && React.createElement("button", {
+      onClick: (e) => { e.stopPropagation(); onRemove(); },
+      style: {
+        position: "absolute", top: 4, right: 8, background: "none", border: "none",
+        color: "#555", fontSize: 16, cursor: "pointer", padding: "2px 6px", lineHeight: 1
+      }
+    }, "\u00D7"),
     React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } },
-      React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+      React.createElement("div", { style: { flex: 1, minWidth: 0, paddingRight: onRemove ? 20 : 0 } },
         React.createElement("div", { style: { fontSize: 13, color: "#888", marginBottom: 2 } },
           `#${game["Game Number"]}  \u00B7  $${game["Ticket Price"]} ticket`),
         React.createElement("div", { style: {
@@ -220,33 +362,10 @@ function GameCard({ game, highlighted, onTap }) {
   );
 }
 
-function ScanResult({ games, ocrText, onClear }) {
-  if (!games || games.length === 0) return null;
-  const sorted = [...games].sort((a, b) => b.pctLeft - a.pctLeft);
-  return React.createElement("div", { style: { padding: "12px 16px" } },
-    React.createElement("div", { style: {
-      display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8
-    }},
-      React.createElement("h2", { style: { fontSize: 16, fontWeight: 600, color: "#fff" } },
-        `Found ${games.length} match${games.length !== 1 ? "es" : ""}`),
-      React.createElement("button", { onClick: onClear, style: {
-        background: "none", border: "1px solid #444", color: "#aaa",
-        padding: "4px 10px", borderRadius: 6, fontSize: 12, cursor: "pointer"
-      }}, "Clear")
-    ),
-    ocrText && React.createElement("div", { style: {
-      fontSize: 11, color: "#555", marginBottom: 10, padding: "6px 8px",
-      background: "#111", borderRadius: 6, maxHeight: 60, overflow: "auto"
-    }}, "OCR: " + ocrText.substring(0, 200)),
-    sorted.map((g, i) => React.createElement(GameCard, {
-      key: `${g["Game Number"]}-${g["Top Prize"]}-${i}`, game: g, highlighted: true
-    }))
-  );
-}
-
 function Scanner({ onResult, onOcrText }) {
   const [scanning, setScanning] = React.useState(false);
   const [progress, setProgress] = React.useState(0);
+  const [status, setStatus] = React.useState("");
   const [error, setError] = React.useState(null);
   const fileRef = React.useRef();
 
@@ -254,25 +373,36 @@ function Scanner({ onResult, onOcrText }) {
     setScanning(true);
     setError(null);
     setProgress(0);
+    setStatus("Loading OCR engine...");
     try {
       const result = await Tesseract.recognize(file, "eng", {
         logger: (m) => {
-          if (m.status === "recognizing text") setProgress(Math.round(m.progress * 100));
+          if (m.status === "recognizing text") {
+            setProgress(Math.round(m.progress * 100));
+            setStatus("Reading ticket names...");
+          } else if (m.status === "loading language traineddata") {
+            setStatus("Loading language data...");
+          }
         }
       });
       const text = result.data.text;
       onOcrText(text);
+      setStatus("Matching against game database...");
 
-      // Fuzzy match against game names
       const found = findGamesByOCR(text);
+      const highCount = found.filter(g => g._confidence === "high").length;
+      const medCount = found.filter(g => g._confidence === "medium").length;
 
       if (found.length > 0) {
         onResult(found);
+        setStatus("");
       } else {
-        setError(`No games matched. OCR read:\n"${text.substring(0, 200).trim()}"\n\nTry searching by name below.`);
+        setError(`No games matched from OCR text. The stylized fonts may be hard to read.\n\nOCR saw: "${text.substring(0, 150).trim()}"\n\nUse name search or Quick Pick below instead.`);
+        setStatus("");
       }
     } catch (e) {
       setError("OCR failed: " + e.message);
+      setStatus("");
     }
     setScanning(false);
     setProgress(0);
@@ -294,7 +424,7 @@ function Scanner({ onResult, onOcrText }) {
         cursor: scanning ? "default" : "pointer",
         display: "flex", alignItems: "center", justifyContent: "center", gap: 8
       }
-    }, scanning ? `Reading ticket names... ${progress}%` : "\uD83D\uDCF7  Snap the Machine"),
+    }, scanning ? `${status} ${progress}%` : "\uD83D\uDCF7  Snap the Machine"),
     scanning && React.createElement("div", { style: {
       height: 4, background: "#222", borderRadius: 2, marginTop: 8, overflow: "hidden"
     }},
@@ -303,6 +433,10 @@ function Scanner({ onResult, onOcrText }) {
         borderRadius: 2, transition: "width 0.3s"
       }})
     ),
+    // Tip
+    !scanning && React.createElement("div", { style: {
+      marginTop: 6, fontSize: 11, color: "#555", textAlign: "center"
+    }}, "Tip: Get close-up shots of individual tickets for best results"),
     error && React.createElement("div", { style: {
       marginTop: 10, padding: "10px 12px", background: "rgba(239,68,68,0.1)",
       border: "1px solid #ef4444", borderRadius: 8, fontSize: 13, color: "#f87171",
@@ -318,13 +452,16 @@ function NameSearch({ onResult }) {
   const handleChange = (val) => {
     setQuery(val);
     if (val.length < 2) { setSuggestions([]); return; }
-
     const q = val.toLowerCase();
+    // Match against game name, handling multiplier patterns
     const matches = UNIQUE_GAMES.filter(g => {
       const name = g["Game Name"].toLowerCase();
       const num = String(g["Game Number"]);
-      return name.includes(q) || num.includes(q);
-    }).slice(0, 8);
+      // Split query into parts and check all present
+      const parts = q.split(/\s+/);
+      const allMatch = parts.every(p => name.includes(p) || num.includes(p));
+      return allMatch || name.includes(q) || num.includes(q);
+    }).slice(0, 10);
     setSuggestions(matches);
   };
 
@@ -337,7 +474,8 @@ function NameSearch({ onResult }) {
 
   return React.createElement("div", { style: { padding: "0 16px 12px" } },
     React.createElement("input", {
-      type: "text", placeholder: "Search by game name (e.g. \"500X\", \"Jumbo\")",
+      type: "text",
+      placeholder: 'Search by name: "500X", "Fever", "Jumbo"',
       value: query, onChange: (e) => handleChange(e.target.value),
       style: {
         width: "100%", padding: "12px 14px", fontSize: 16, background: "#111",
@@ -346,7 +484,7 @@ function NameSearch({ onResult }) {
     }),
     suggestions.length > 0 && React.createElement("div", { style: {
       background: "#161620", border: "1px solid #333", borderRadius: 10,
-      marginTop: 4, overflow: "hidden"
+      marginTop: 4, overflow: "hidden", maxHeight: 320, overflowY: "auto"
     }},
       suggestions.map((g, i) => {
         const color = getColor(g.pctLeft);
@@ -365,7 +503,7 @@ function NameSearch({ onResult }) {
               whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis"
             }}, g["Game Name"]),
             React.createElement("div", { style: { fontSize: 12, color: "#666" } },
-              `$${g["Ticket Price"]}  \u00B7  Top: ${formatMoney(g["Top Prize"])}`)
+              `$${g["Ticket Price"]}  \u00B7  #${g["Game Number"]}  \u00B7  Top: ${formatMoney(g["Top Prize"])}`)
           ),
           React.createElement("div", { style: {
             fontSize: 12, fontWeight: 700, color, marginLeft: 8, whiteSpace: "nowrap"
@@ -384,8 +522,7 @@ function QuickPick({ onResult, selected }) {
   let games = UNIQUE_GAMES.filter(g => g.pctLeft > 0);
   if (priceFilter !== null) games = games.filter(g => g["Ticket Price"] === priceFilter);
   games.sort((a, b) => a["Game Name"].localeCompare(b["Game Name"]));
-  const display = expanded ? games : games.slice(0, 12);
-
+  const display = expanded ? games : games.slice(0, 15);
   const prices = [...new Set(GAMES.map(g => g["Ticket Price"]))].sort((a, b) => a - b);
 
   const toggle = (game) => {
@@ -394,13 +531,10 @@ function QuickPick({ onResult, selected }) {
   };
 
   return React.createElement("div", { style: { padding: "0 16px 12px" } },
+    React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: "#999", marginBottom: 8 } },
+      "Quick Pick \u2014 tap games you see on the machine:"),
     React.createElement("div", { style: {
-      fontSize: 13, fontWeight: 600, color: "#999", marginBottom: 8
-    }}, "Quick Pick — tap games you see:"),
-    // Price chips
-    React.createElement("div", { style: {
-      display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8,
-      WebkitOverflowScrolling: "touch"
+      display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8, WebkitOverflowScrolling: "touch"
     }},
       React.createElement("button", {
         onClick: () => setPriceFilter(null),
@@ -421,10 +555,7 @@ function QuickPick({ onResult, selected }) {
         }
       }, `$${p}`))
     ),
-    // Game chips
-    React.createElement("div", { style: {
-      display: "flex", flexWrap: "wrap", gap: 6
-    }},
+    React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
       display.map(g => {
         const isSelected = selectedNums.has(g["Game Number"]);
         const color = getColor(g.pctLeft);
@@ -436,13 +567,12 @@ function QuickPick({ onResult, selected }) {
             border: isSelected ? `2px solid ${color}` : "1px solid #333",
             background: isSelected ? getBgColor(g.pctLeft) : "#111",
             color: isSelected ? color : "#ccc",
-            fontWeight: isSelected ? 700 : 400,
-            whiteSpace: "nowrap"
+            fontWeight: isSelected ? 700 : 400, whiteSpace: "nowrap"
           }
-        }, g["Game Name"].length > 24 ? g["Game Name"].substring(0, 22) + "\u2026" : g["Game Name"]);
+        }, g["Game Name"].length > 22 ? g["Game Name"].substring(0, 20) + "\u2026" : g["Game Name"]);
       })
     ),
-    !expanded && games.length > 12 && React.createElement("button", {
+    !expanded && games.length > 15 && React.createElement("button", {
       onClick: () => setExpanded(true),
       style: {
         marginTop: 8, padding: "6px 12px", fontSize: 12, color: "#3b82f6",
@@ -461,20 +591,16 @@ function FilterBar({ priceFilter, setPriceFilter, sortBy, setSortBy }) {
       React.createElement("button", {
         onClick: () => setPriceFilter(null),
         style: {
-          padding: "6px 12px", fontSize: 12, fontWeight: 600, borderRadius: 20,
-          border: "none", cursor: "pointer",
-          background: priceFilter === null ? "#3b82f6" : "#1a1a2e",
-          color: priceFilter === null ? "#fff" : "#888",
+          padding: "6px 12px", fontSize: 12, fontWeight: 600, borderRadius: 20, border: "none", cursor: "pointer",
+          background: priceFilter === null ? "#3b82f6" : "#1a1a2e", color: priceFilter === null ? "#fff" : "#888",
           whiteSpace: "nowrap", flexShrink: 0
         }
       }, "All"),
       prices.map(p => React.createElement("button", {
         key: p, onClick: () => setPriceFilter(p),
         style: {
-          padding: "6px 12px", fontSize: 12, fontWeight: 600, borderRadius: 20,
-          border: "none", cursor: "pointer",
-          background: priceFilter === p ? "#3b82f6" : "#1a1a2e",
-          color: priceFilter === p ? "#fff" : "#888",
+          padding: "6px 12px", fontSize: 12, fontWeight: 600, borderRadius: 20, border: "none", cursor: "pointer",
+          background: priceFilter === p ? "#3b82f6" : "#1a1a2e", color: priceFilter === p ? "#fff" : "#888",
           whiteSpace: "nowrap", flexShrink: 0
         }
       }, `$${p}`))
@@ -484,10 +610,8 @@ function FilterBar({ priceFilter, setPriceFilter, sortBy, setSortBy }) {
         React.createElement("button", {
           key: k, onClick: () => setSortBy(k),
           style: {
-            flex: 1, padding: "6px 0", fontSize: 12, fontWeight: 600, borderRadius: 8,
-            border: "none", cursor: "pointer",
-            background: sortBy === k ? "#222" : "transparent",
-            color: sortBy === k ? "#fff" : "#666"
+            flex: 1, padding: "6px 0", fontSize: 12, fontWeight: 600, borderRadius: 8, border: "none", cursor: "pointer",
+            background: sortBy === k ? "#222" : "transparent", color: sortBy === k ? "#fff" : "#666"
           }
         }, label)
       )
@@ -578,6 +702,15 @@ function App() {
     }
   };
 
+  const removeResult = (gameNum, topPrize) => {
+    setScanResults(prev => (prev || []).filter(g =>
+      !(g["Game Number"] === gameNum && g["Top Prize"] === topPrize)
+    ));
+    setQuickPicked(prev => prev.filter(g =>
+      !(g["Game Number"] === gameNum && g["Top Prize"] === topPrize)
+    ));
+  };
+
   const clearAll = () => {
     setScanResults(null);
     setOcrText(null);
@@ -595,9 +728,19 @@ function App() {
     });
   }, [scanResults, quickPicked]);
 
+  // Summary stats
+  const summary = React.useMemo(() => {
+    if (allResults.length === 0) return null;
+    const good = allResults.filter(g => g.pctLeft >= 50).length;
+    const decent = allResults.filter(g => g.pctLeft >= 25 && g.pctLeft < 50).length;
+    const low = allResults.filter(g => g.pctLeft > 0 && g.pctLeft < 25).length;
+    const dead = allResults.filter(g => g.pctLeft === 0).length;
+    const best = [...allResults].sort((a, b) => b.pctLeft - a.pctLeft)[0];
+    return { good, decent, low, dead, best };
+  }, [allResults]);
+
   return React.createElement("div", null,
     React.createElement(Header),
-    // Tab bar
     React.createElement("div", { style: {
       display: "flex", background: "#111", borderBottom: "1px solid #222"
     }},
@@ -633,7 +776,8 @@ function App() {
         React.createElement("div", { style: { flex: 1, height: 1, background: "#333" } })
       ),
       React.createElement(QuickPick, { onResult: handleQuickPick, selected: quickPicked }),
-      // Results
+
+      // ── Results Section ──
       allResults.length > 0 && React.createElement("div", { style: { padding: "12px 16px" } },
         React.createElement("div", { style: {
           display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8
@@ -645,14 +789,39 @@ function App() {
             padding: "4px 10px", borderRadius: 6, fontSize: 12, cursor: "pointer"
           }}, "Clear All")
         ),
-        ocrText && React.createElement("div", { style: {
-          fontSize: 11, color: "#555", marginBottom: 10, padding: "6px 8px",
-          background: "#111", borderRadius: 6, maxHeight: 50, overflow: "auto"
-        }}, "OCR: " + ocrText.substring(0, 200)),
+        // Summary bar
+        summary && React.createElement("div", { style: {
+          display: "flex", gap: 8, marginBottom: 10, padding: "8px 10px",
+          background: "#111", borderRadius: 8, fontSize: 12, fontWeight: 600
+        }},
+          summary.good > 0 && React.createElement("span", { style: { color: "#22c55e" } },
+            `${summary.good} Good`),
+          summary.decent > 0 && React.createElement("span", { style: { color: "#eab308" } },
+            `${summary.decent} Decent`),
+          summary.low > 0 && React.createElement("span", { style: { color: "#f97316" } },
+            `${summary.low} Low`),
+          summary.dead > 0 && React.createElement("span", { style: { color: "#ef4444" } },
+            `${summary.dead} Dead`),
+          summary.best && React.createElement("span", { style: { color: "#888", marginLeft: "auto" } },
+            `Best: ${summary.best["Game Name"].substring(0, 18)}`)
+        ),
+        // OCR debug text
+        ocrText && React.createElement("details", { style: { marginBottom: 10 } },
+          React.createElement("summary", { style: {
+            fontSize: 11, color: "#444", cursor: "pointer"
+          }}, "Show OCR text"),
+          React.createElement("div", { style: {
+            fontSize: 10, color: "#444", padding: "6px 8px", marginTop: 4,
+            background: "#0a0a0f", borderRadius: 6, maxHeight: 100, overflow: "auto",
+            whiteSpace: "pre-wrap", fontFamily: "monospace"
+          }}, ocrText.substring(0, 500))
+        ),
+        // Game cards sorted by % left
         [...allResults].sort((a, b) => b.pctLeft - a.pctLeft).map((g, i) =>
           React.createElement(GameCard, {
             key: `r-${g["Game Number"]}-${g["Top Prize"]}-${i}`,
-            game: g, highlighted: true
+            game: g, highlighted: true,
+            onRemove: () => removeResult(g["Game Number"], g["Top Prize"])
           })
         )
       )
