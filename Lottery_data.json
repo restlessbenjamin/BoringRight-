@@ -1,13 +1,5 @@
 [
   {
-    "Game Number": 1876,
-    "Game Name": "$1,500,000 MAX",
-    "Ticket Price": 10,
-    "Top Prize": 1500000,
-    "Claimed": 0,
-    "Total": 3
-  },
-  {
     "Game Number": 1704,
     "Game Name": "$1 Big Georgia Raffle",
     "Ticket Price": 1,
@@ -56,6 +48,22 @@
     "Total": 3
   },
   {
+    "Game Number": 1876,
+    "Game Name": "$1,500,000 MAX",
+    "Ticket Price": 10,
+    "Top Prize": 1500000,
+    "Claimed": 1,
+    "Total": 3
+  },
+  {
+    "Game Number": 1886,
+    "Game Name": "$10 Jackpots Galore",
+    "Ticket Price": 10,
+    "Top Prize": 1000000,
+    "Claimed": 0,
+    "Total": 3
+  },
+  {
     "Game Number": 1620,
     "Game Name": "$10,000 Payout",
     "Ticket Price": 10,
@@ -84,7 +92,7 @@
     "Game Name": "$100 or $200",
     "Ticket Price": 20,
     "Top Prize": 200,
-    "Claimed": 29689,
+    "Claimed": 33026,
     "Total": 49033
   },
   {
@@ -100,7 +108,7 @@
     "Game Name": "$100, $200, $300, and $1,000 Cash",
     "Ticket Price": 20,
     "Top Prize": 1000,
-    "Claimed": 660,
+    "Claimed": 673,
     "Total": 806
   },
   {
@@ -118,6 +126,14 @@
     "Top Prize": 50000,
     "Claimed": 6,
     "Total": 8
+  },
+  {
+    "Game Number": 1883,
+    "Game Name": "$2 Jackpots Galore",
+    "Ticket Price": 2,
+    "Top Prize": 50000,
+    "Claimed": 0,
+    "Total": 3
   },
   {
     "Game Number": 1715,
@@ -156,8 +172,16 @@
     "Game Name": "$20 Big Georgia Raffle",
     "Ticket Price": 20,
     "Top Prize": 2000000,
-    "Claimed": 2,
+    "Claimed": 3,
     "Total": 4
+  },
+  {
+    "Game Number": 1887,
+    "Game Name": "$20 Jackpots Galore",
+    "Ticket Price": 20,
+    "Top Prize": 2000000,
+    "Claimed": 0,
+    "Total": 3
   },
   {
     "Game Number": 1801,
@@ -220,7 +244,7 @@
     "Game Name": "$400,000 Fortune",
     "Ticket Price": 5,
     "Top Prize": 400000,
-    "Claimed": 1,
+    "Claimed": 2,
     "Total": 3
   },
   {
@@ -238,6 +262,14 @@
     "Top Prize": 500000,
     "Claimed": 3,
     "Total": 4
+  },
+  {
+    "Game Number": 1885,
+    "Game Name": "$5 Jackpots Galore",
+    "Ticket Price": 5,
+    "Top Prize": 500000,
+    "Claimed": 0,
+    "Total": 3
   },
   {
     "Game Number": 1485,
@@ -268,7 +300,7 @@
     "Game Name": "$500 Jingle Jumbo Bucks",
     "Ticket Price": 5,
     "Top Prize": 500,
-    "Claimed": 10794,
+    "Claimed": 11196,
     "Total": 12428
   },
   {
@@ -300,7 +332,7 @@
     "Game Name": "$600 Fever",
     "Ticket Price": 10,
     "Top Prize": 600,
-    "Claimed": 13644,
+    "Claimed": 13999,
     "Total": 17442
   },
   {
@@ -332,7 +364,7 @@
     "Game Name": "100x The Money",
     "Ticket Price": 20,
     "Top Prize": 3000000,
-    "Claimed": 17,
+    "Claimed": 18,
     "Total": 19
   },
   {
@@ -380,7 +412,7 @@
     "Game Name": "20X The Money",
     "Ticket Price": 5,
     "Top Prize": 400000,
-    "Claimed": 54,
+    "Claimed": 55,
     "Total": 62
   },
   {
@@ -395,17 +427,17 @@
     "Game Number": 1737,
     "Game Name": "2nd Edition Billionaire Club Series**",
     "Ticket Price": 30,
-    "Top Prize": 7000000,
-    "Claimed": 2,
-    "Total": 4
+    "Top Prize": 1000000,
+    "Claimed": 11,
+    "Total": 22
   },
   {
     "Game Number": 1737,
     "Game Name": "2nd Edition Billionaire Club Series**",
     "Ticket Price": 30,
-    "Top Prize": 1000000,
-    "Claimed": 11,
-    "Total": 22
+    "Top Prize": 7000000,
+    "Claimed": 3,
+    "Total": 4
   },
   {
     "Game Number": 1732,
@@ -444,8 +476,8 @@
     "Game Name": "5X The Money",
     "Ticket Price": 1,
     "Top Prize": 10000,
-    "Claimed": 114,
-    "Total": 120
+    "Claimed": 115,
+    "Total": 135
   },
   {
     "Game Number": 1760,
@@ -572,7 +604,7 @@
     "Game Name": "Cherry, Orange, Lemon Tripler Cashword",
     "Ticket Price": 3,
     "Top Prize": 125000,
-    "Claimed": 77,
+    "Claimed": 78,
     "Total": 83
   },
   {
@@ -636,7 +668,7 @@
     "Game Name": "Fast $20's",
     "Ticket Price": 2,
     "Top Prize": 20,
-    "Claimed": 193263,
+    "Claimed": 193265,
     "Total": 207419
   },
   {
@@ -644,7 +676,7 @@
     "Game Name": "Fast $50's",
     "Ticket Price": 5,
     "Top Prize": 50,
-    "Claimed": 141116,
+    "Claimed": 141118,
     "Total": 146868
   },
   {
@@ -684,7 +716,7 @@
     "Game Name": "Georgia Millionaire",
     "Ticket Price": 10,
     "Top Prize": 10000,
-    "Claimed": 63,
+    "Claimed": 71,
     "Total": 100
   },
   {
@@ -764,7 +796,7 @@
     "Game Name": "Happy New Year 2026",
     "Ticket Price": 3,
     "Top Prize": 20026,
-    "Claimed": 12,
+    "Claimed": 13,
     "Total": 17
   },
   {
@@ -884,7 +916,7 @@
     "Game Name": "Jumbo Bucks Classic",
     "Ticket Price": 2,
     "Top Prize": 50000,
-    "Claimed": 221,
+    "Claimed": 222,
     "Total": 250
   },
   {
@@ -932,7 +964,7 @@
     "Game Name": "Junior Jumbo Bucks",
     "Ticket Price": 1,
     "Top Prize": 10000,
-    "Claimed": 238,
+    "Claimed": 240,
     "Total": 279
   },
   {
@@ -948,8 +980,8 @@
     "Game Name": "Loteria",
     "Ticket Price": 2,
     "Top Prize": 40000,
-    "Claimed": 73,
-    "Total": 84
+    "Claimed": 74,
+    "Total": 90
   },
   {
     "Game Number": 1486,
@@ -1076,14 +1108,14 @@
     "Game Name": "Money Bag",
     "Ticket Price": 5,
     "Top Prize": 500,
-    "Claimed": 4697,
+    "Claimed": 4702,
     "Total": 5101
   },
   {
     "Game Number": 1575,
     "Game Name": "Monopoly $1,000 a Week for Life",
     "Ticket Price": 2,
-    "Top Prize": "$1,000 a week for life",
+    "Top Prize": "$1,000/wk for life",
     "Claimed": 4,
     "Total": 5
   },
@@ -1092,7 +1124,7 @@
     "Game Name": "Mystery Bingo Multiplier",
     "Ticket Price": 3,
     "Top Prize": 170000,
-    "Claimed": 2,
+    "Claimed": 3,
     "Total": 4
   },
   {
@@ -1196,7 +1228,7 @@
     "Game Name": "Quick Wins",
     "Ticket Price": 2,
     "Top Prize": 100,
-    "Claimed": 2757,
+    "Claimed": 2760,
     "Total": 2961
   },
   {
@@ -1347,7 +1379,7 @@
     "Game Number": 1813,
     "Game Name": "Win $1,000 a Month for Life",
     "Ticket Price": 2,
-    "Top Prize": "$1,000 a Month for Life",
+    "Top Prize": "$1K/mo for life",
     "Claimed": 2,
     "Total": 4
   },
@@ -1364,7 +1396,7 @@
     "Game Name": "Win Either $50 or $100",
     "Ticket Price": 10,
     "Top Prize": 100,
-    "Claimed": 698283,
+    "Claimed": 698284,
     "Total": 702592
   },
   {
@@ -1372,7 +1404,7 @@
     "Game Name": "Win Either $50 or $100",
     "Ticket Price": 10,
     "Top Prize": 100,
-    "Claimed": 602592,
+    "Claimed": 610001,
     "Total": 1001430
   },
   {
@@ -1408,4 +1440,3 @@
     "Total": 3
   }
 ]
-
