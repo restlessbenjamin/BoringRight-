@@ -1,0 +1,6 @@
+node_modules/
+*.traineddata
+scripts/_sheets.mjs
+scripts/_odds_raw.txt
+scripts/_import.mjs
+.claude/
