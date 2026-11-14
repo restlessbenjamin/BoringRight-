@@ -192,7 +192,7 @@ const TABS = [
 
 function statLine(key, a) {
   if (key === "jackpot") return `${prizeName(a)} · ${oneIn(a.pTop)} per ticket · ${oneIn(perSpend(a.pTop, a.price))} per $100`;
-  if (key === "big") return `$100K+ · ${oneIn(a.atLeast(100000))} per ticket · ${oneIn(perSpend(a.atLeast(100000), a.price))} per $100`;
+  if (key === "big") return `$1M+ · ${oneIn(a.atLeast(1000000))} per ticket · ${oneIn(perSpend(a.atLeast(1000000), a.price))} per $100`;
   if (key === "mid") { const p = a.atLeast(500, 100000); return `$500–$99,999 · ${oneIn(p)} per ticket · ${oneIn(perSpend(p, a.price))} per $100`; }
   if (key === "any") return `Wins ${oneIn(a.pAny)} tickets · ${(100 / a.price).toFixed(100 % a.price ? 1 : 0)} tickets per $100`;
   if (key === "ret") return `Pays back about ${(a.returnRate * 100).toFixed(0)}¢ per $1 · wins ${oneIn(a.pAny)}`;
