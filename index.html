@@ -128,7 +128,9 @@ const store = {
   del(k) { try { localStorage.removeItem(k); } catch {} },
 };
 
+const LIVE_DATA = "https://raw.githubusercontent.com/restlessbenjamin/BoringRight-/data/data/";
 let DATA = null;
+let DATA_BASE = "data/";
 let GAMES = new Map();
 let selected = new Map(store.get("selected", [])); // num -> { soldOut, left }
 let tab = store.get("tab", "jackpot");
@@ -141,14 +143,16 @@ const perSpend = (p, price, spend = 100) => 1 - Math.pow(1 - p, spend / price);
 
 // ---------- data ----------
 async function load() {
-  try {
-    const r = await fetch("data/games.json", { cache: "no-cache" });
-    if (!r.ok) throw new Error(r.status);
-    DATA = await r.json();
-  } catch (e) {
-    $("asof").textContent = "Could not load game data.";
-    return;
+  // The weekly refresh publishes to the "data" branch; the copy shipped with the page is the fallback.
+  for (const base of [LIVE_DATA, "data/"]) {
+    try {
+      const r = await fetch(base + "games.json", { cache: "no-cache" });
+      if (!r.ok) continue;
+      const d = await r.json();
+      if (d?.games?.length) { DATA = d; DATA_BASE = base; break; }
+    } catch {}
   }
+  if (!DATA) { $("asof").textContent = "Could not load game data."; return; }
   const localOdds = store.get("localOdds", {});
   for (const g of DATA.games) {
     if (!g.odds && localOdds[g.num]) g.odds = localOdds[g.num];
@@ -377,7 +381,7 @@ const ODDS_SCHEMA = {
 
 /** New games arrive with only an image of their odds table; read it once and keep it on this device. */
 async function readOddsTable(g) {
-  const r = await fetch(`data/odds-img/${g.num}.jpg`);
+  const r = await fetch(`${DATA_BASE}odds-img/${g.num}.jpg`);
   if (!r.ok) return false;
   const img = await toJpegBase64(await r.blob(), 1200);
   const out = await askJson(
