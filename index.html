@@ -283,12 +283,35 @@ $("forget").onclick = () => { store.del("apiKey"); $("key").value = ""; $("setti
 // ---------- photo reading ----------
 function status(msg, err = false) { $("status").textContent = msg; $("status").className = "status" + (err ? " err" : ""); }
 
+// Photos from the gallery arrive in more shapes than fresh camera shots: other
+// formats, cloud-backed files, missing orientation support. Try each decoder in turn.
+async function decodeImage(file) {
+  if (!file || file.size === 0) throw new Error("That photo came through empty. If it is stored in the cloud, open it in your gallery first so it downloads, then pick it again.");
+  // Copy the bytes now: some Android pickers hand over a reference that stops working once the picker closes.
+  const blob = new Blob([await file.arrayBuffer()], { type: file.type || "image/jpeg" });
+  try { return await createImageBitmap(blob, { imageOrientation: "from-image" }); } catch {}
+  try { return await createImageBitmap(blob); } catch {}
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    return img;
+  } catch {
+    const kind = /hei[cf]/i.test(file.type + file.name) ? "HEIC" : (file.type || "this").replace("image/", "").toUpperCase();
+    throw new Error(`This browser cannot open ${kind} photos. Use the Take photo button, or share the photo as a JPEG.`);
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+}
+
 async function toJpegBase64(file, maxEdge = 2000) {
-  const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
-  const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
+  const bmp = await decodeImage(file);
+  const w = bmp.naturalWidth || bmp.width, h = bmp.naturalHeight || bmp.height;
+  const scale = Math.min(1, maxEdge / Math.max(w, h));
   const c = document.createElement("canvas");
-  c.width = Math.round(bmp.width * scale);
-  c.height = Math.round(bmp.height * scale);
+  c.width = Math.round(w * scale);
+  c.height = Math.round(h * scale);
   c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
   const url = c.toDataURL("image/jpeg", 0.88);
   return { url, data: url.split(",")[1] };
@@ -401,12 +424,14 @@ async function readOddsTable(g) {
 }
 
 async function scan(files) {
-  if (!files.length || !DATA) return;
+  if (!DATA) return;
+  if (!files.length) { status("No photo was received from the picker. Try again, or use Take photo.", true); return; }
   let added = 0;
   const unknown = [];
-  try {
-    for (let i = 0; i < files.length; i++) {
-      status(`Reading photo ${i + 1} of ${files.length}…`);
+  const failed = [];
+  for (let i = 0; i < files.length; i++) {
+    status(`Reading photo ${i + 1} of ${files.length}…`);
+    try {
       const img = await toJpegBase64(files[i]);
       $("thumbs").insertAdjacentHTML("beforeend", `<img src="${img.url}" alt="Scanned photo">`);
       for (const t of await readMachine(img)) {
@@ -419,19 +444,34 @@ async function scan(files) {
       }
       saveSel();
       render();
+    } catch (e) {
+      failed.push(`Photo ${i + 1}: ${explain(e)}`);
+      if (!store.get("apiKey", "")) break; // every photo would fail the same way
     }
+  }
+  try {
     const need = [...selected.keys()].map((n) => GAMES.get(n)).filter((g) => !g.odds && g.oddsImg);
     for (const g of need) {
       status(`Reading the odds table for ${g.name}…`);
       await readOddsTable(g);
     }
-    status(`Found ${added} new game${added === 1 ? "" : "s"}.` + (unknown.length ? ` Not in the active list: ${unknown.join(", ")}.` : ""));
   } catch (e) {
-    status(explain(e), true);
+    failed.push(explain(e));
   }
+  const ok = files.length - failed.length;
+  const parts = [];
+  if (ok > 0) parts.push(`Found ${added} new game${added === 1 ? "" : "s"} in ${ok} photo${ok === 1 ? "" : "s"}.`);
+  if (unknown.length) parts.push(`Not in the active list: ${unknown.join(", ")}.`);
+  parts.push(...failed);
+  status(parts.join(" "), failed.length > 0);
   render();
 }
-for (const id of ["cam", "pick"]) $(id).addEventListener("change", (e) => { const f = [...e.target.files]; e.target.value = ""; scan(f); });
+for (const id of ["cam", "pick"]) {
+  // Clear on tap (not after picking) so choosing the same photo twice still fires,
+  // without touching the input while its files are being read.
+  $(id).addEventListener("click", (e) => { e.target.value = ""; });
+  $(id).addEventListener("change", (e) => scan([...e.target.files]));
+}
 
 load();
 </script>
