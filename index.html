@@ -188,6 +188,7 @@ const TABS = [
   ["any", "Any win", "Chance per dollar that a ticket wins anything, including a free ticket."],
   ["ret", "Value", "Average payout per dollar spent. Higher loses less over time."],
   ["prize", "By prize", "For each prize size, the game most likely per dollar to pay at least that much."],
+  ["az", "A–Z", "Every game in name order, to look one up quickly."],
 ];
 
 function statLine(key, a) {
@@ -243,6 +244,13 @@ function render() {
         return `<div class="stat" style="margin-top:6px">${i + 1}. ${esc(r.a.game.name)} <span class="price">$${r.a.price}</span></div><div class="sub">${oneIn(p)} per ticket · ${oneIn(perSpend(p, r.a.price))} per $100</div>`;
       }).join("") + `</div>`;
     }).join("");
+  } else if (tab === "az") {
+    const key = (a) => a.game.name.replace(/^[^a-z0-9]+/i, "");
+    html = [...all].sort((x, y) => key(x).localeCompare(key(y), "en", { numeric: true, sensitivity: "base" })).map((a) =>
+      `<div class="card"><div class="top"><span class="name">${esc(a.game.name)}</span><span class="price">$${a.price}</span></div>
+        <div class="stat" style="margin-top:6px">Top prize ${prizeName(a)} · ${oneIn(a.pTop)}</div>
+        <div class="sub">Pays back about ${(a.returnRate * 100).toFixed(0)}¢ per $1 · wins ${oneIn(a.pAny)}</div>
+        <div class="sub">${subLine(a)}</div>${detail(a)}</div>`).join("");
   } else {
     const rows = rank(all, METRICS[tab].value);
     const limit = selected.size ? rows.length : 25;
