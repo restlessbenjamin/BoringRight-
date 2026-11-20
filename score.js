@@ -4,23 +4,61 @@
 // have been claimed out of the total. What is not published: how many tickets
 // are still unsold. So the current top-prize odds are an estimate:
 //
-//   sold fraction  f  ~ claimed / (total + 1)
-//   current odds   =  printed odds x (share of top prizes left) / (1 - f)
+//   current odds = printed odds x (share of top prizes left) / (share of tickets left)
 //
-// With no claims this is exactly the printed odds; as claims pile up it drops,
-// but less harshly than assuming no tickets have sold.
+// The share of tickets sold is estimated from two things:
+//   1. the game's own claims, claimed / total. With only 3 or 4 top prizes this
+//      says very little, since they can all turn up early or all late.
+//   2. how old the game is. Game numbers are issued in launch order, so games
+//      with nearby numbers went on sale around the same time. Their pooled
+//      claimed share is a far steadier read of how far along a game of that
+//      age usually is.
+// The two are blended: a game with few top prizes leans on its age group, a
+// game with hundreds leans on its own count.
 
-/** Multiplier applied to the printed top-prize probability. 0 when every top prize is claimed. */
-export function topPrizeFactor(claimed, total) {
-  if (!total || total <= 0) return 1;
-  if (claimed >= total) return 0;
-  return ((total - claimed) * (total + 1)) / (total * (total + 1 - claimed));
+const PRIOR_WEIGHT = 4; // the age group counts as much as 4 top prizes of evidence
+const MAX_SOLD = 0.95;  // never assume a game still on sale is fully sold
+
+const bestRow = (game) => [...(game.tops || [])].sort((a, b) => b.total - a.total)[0];
+
+/**
+ * Sets game.soldPrior on every game: the claimed share of top prizes among
+ * games launched around the same time (nearest in game-number order), not
+ * counting the game itself. Call once on the full active list.
+ */
+export function addSoldPriors(games, { band = 6, rowCap = 10 } = {}) {
+  const rows = games.map((game) => ({ game, t: bestRow(game) })).filter((r) => r.t?.total > 0).sort((a, b) => a.game.num - b.game.num);
+  rows.forEach((r, i) => {
+    let k = 0, n = 0;
+    rows.forEach((o, j) => {
+      if (i === j) return;
+      // Weight by closeness in launch order; cap each game so one with a huge prize count cannot swamp the rest.
+      const w = Math.exp(-0.5 * ((i - j) / band) ** 2) * Math.min(o.t.total, rowCap);
+      k += w * (o.t.claimed / o.t.total);
+      n += w;
+    });
+    r.game.soldPrior = n > 0 ? k / n : null;
+  });
+  return games;
 }
 
-/** Rough share of the print run already sold, from the best-sampled top-prize row. */
+/** Estimated share of the print run already sold. */
 export function soldEstimate(game) {
-  const t = [...(game.tops || [])].sort((a, b) => b.total - a.total)[0];
-  return t && t.total ? t.claimed / (t.total + 1) : 0;
+  const t = bestRow(game);
+  if (!t || !t.total) return game.soldPrior ?? 0;
+  if (game.soldPrior == null) return t.claimed / (t.total + 1); // no age information
+  return Math.min(MAX_SOLD, (t.claimed + PRIOR_WEIGHT * game.soldPrior) / (t.total + PRIOR_WEIGHT));
+}
+
+/**
+ * Multiplier applied to the printed top-prize probability: share of prizes
+ * left over share of tickets left. 0 when every top prize is claimed. Above 1
+ * means prizes have been claimed more slowly than tickets have sold.
+ */
+export function topPrizeFactor(claimed, total, sold = claimed / (total + 1)) {
+  if (!total || total <= 0) return 1;
+  if (claimed >= total) return 0;
+  return (total - claimed) / total / (1 - Math.min(sold, MAX_SOLD));
 }
 
 /** Per-game numbers. Returns null when the game has no odds table. */
@@ -30,12 +68,14 @@ export function analyze(game) {
   const tiers = o.tiers.map((t) => ({ ...t, p: 1 / t.odds, factor: 1 }));
   const cash = tiers.filter((t) => !t.ticket);
   const tops = [...(game.tops || [])].sort((a, b) => (b.prize || 0) - (a.prize || 0));
+  const sold = soldEstimate(game);
+  const useAge = game.soldPrior != null;
   tops.forEach((top, i) => {
     let tier = cash.find((t) => t.prize === top.prize && !t.top);
     if (!tier && i === 0) tier = cash[cash.length - 1]; // listed top prize differs from the table's
     if (tier) {
       tier.top = top;
-      tier.factor = topPrizeFactor(top.claimed, top.total);
+      tier.factor = useAge ? topPrizeFactor(top.claimed, top.total, sold) : topPrizeFactor(top.claimed, top.total);
     }
   });
   for (const t of tiers) t.pNow = t.p * t.factor;
@@ -55,7 +95,9 @@ export function analyze(game) {
     pAny: o.overall ? 1 / o.overall : tiers.reduce((s, t) => s + t.p, 0),
     overall: o.overall,
     returnRate: ev / game.price,
-    sold: soldEstimate(game),
+    sold,
+    agePrior: game.soldPrior ?? null,
+    topFactor: best.factor,
     atLeast,
   };
 }
