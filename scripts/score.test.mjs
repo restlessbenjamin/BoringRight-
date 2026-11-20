@@ -91,3 +91,12 @@ test("age: every real game gets a prior and a sane factor", () => {
   for (const g of games) assert.ok(g.soldPrior >= 0 && g.soldPrior <= 1, `${g.num}`);
   for (const a of games.map(analyze).filter(Boolean)) assert.ok(a.topFactor >= 0 && a.topFactor < 4, `${a.game.num} x${a.topFactor}`);
 });
+
+test("age: start date outranks game number when both are known", () => {
+  const mk = (num, launch, claimed, total) => ({ num, name: "G" + num, price: 5, launch, tops: [{ prize: 100000, claimed, total }] });
+  const old = Array.from({ length: 10 }, (_, i) => mk(100 + i, "2024-01-0" + (i % 9 + 1), 9, 10));
+  const fresh = Array.from({ length: 10 }, (_, i) => mk(200 + i, "2026-10-0" + (i % 9 + 1), 1, 10));
+  const reissue = mk(50, "2026-10-05", 0, 3); // low number, but only just went on sale
+  addSoldPriors([...old, ...fresh, reissue]);
+  assert.ok(reissue.soldPrior < 0.3, `${reissue.soldPrior}`);
+});

@@ -9,10 +9,10 @@
 // The share of tickets sold is estimated from two things:
 //   1. the game's own claims, claimed / total. With only 3 or 4 top prizes this
 //      says very little, since they can all turn up early or all late.
-//   2. how old the game is. Game numbers are issued in launch order, so games
-//      with nearby numbers went on sale around the same time. Their pooled
-//      claimed share is a far steadier read of how far along a game of that
-//      age usually is.
+//   2. how old the game is (game.launch, its start date; a game without one
+//      is placed by its number, since numbers are issued in launch order).
+//      Games that went on sale around the same time have, pooled together, a
+//      far steadier claimed share than any one of them.
 // The two are blended: a game with few top prizes leans on its age group, a
 // game with hundreds leans on its own count.
 
@@ -23,11 +23,18 @@ const bestRow = (game) => [...(game.tops || [])].sort((a, b) => b.total - a.tota
 
 /**
  * Sets game.soldPrior on every game: the claimed share of top prizes among
- * games launched around the same time (nearest in game-number order), not
+ * games launched around the same time (nearest in start-date order), not
  * counting the game itself. Call once on the full active list.
  */
 export function addSoldPriors(games, { band = 6, rowCap = 10 } = {}) {
   const rows = games.map((game) => ({ game, t: bestRow(game) })).filter((r) => r.t?.total > 0).sort((a, b) => a.game.num - b.game.num);
+  // Order by start date. A game with no date borrows the date of the nearest-numbered game that has one.
+  const dated = rows.filter((r) => r.game.launch);
+  for (const r of rows) {
+    const src = r.game.launch ? r : dated.reduce((best, d) => (!best || Math.abs(d.game.num - r.game.num) < Math.abs(best.game.num - r.game.num) ? d : best), null);
+    r.when = src ? Date.parse(src.game.launch) : 0;
+  }
+  rows.sort((a, b) => a.when - b.when || a.game.num - b.game.num);
   rows.forEach((r, i) => {
     let k = 0, n = 0;
     rows.forEach((o, j) => {
