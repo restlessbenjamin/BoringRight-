@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { topPrizeFactor, analyze, rank, bestByPrize, METRICS, oddsProblems } from "../score.js";
+import { topPrizeFactor, analyze, rank, bestByPrize, METRICS, oddsProblems, addSoldPriors, soldEstimate } from "../score.js";
 import { parseTopPrizesPage } from "./lib.mjs";
 
 const data = JSON.parse(fs.readFileSync(new URL("../data/games.json", import.meta.url), "utf8"));
@@ -64,4 +64,39 @@ test("page parser reads the embedded list and merges duplicate game rows", () =>
   const club = games.find((g) => g.num === 1737);
   assert.equal(club.name, "Club");
   assert.deepEqual(club.tops.map((t) => t.prize), [7000000, 1000000]);
+});
+
+test("age: of two games with the same claims, the older one is further sold and has better top-prize odds", () => {
+  const mk = (num, claimed, total) => ({ num, name: "G" + num, price: 5, tops: [{ prize: 100000, claimed, total }] });
+  // Launch order 1..20: old games mostly claimed out, new games barely touched.
+  const games = Array.from({ length: 20 }, (_, i) => mk(i + 1, i < 10 ? 9 : 1, 10));
+  const old = mk(0, 2, 4), young = mk(21, 2, 4);
+  addSoldPriors([old, ...games, young]);
+  assert.ok(old.soldPrior > 0.8 && young.soldPrior < 0.2, `${old.soldPrior} ${young.soldPrior}`);
+  assert.ok(soldEstimate(old) > soldEstimate(young));
+  assert.ok(topPrizeFactor(2, 4, soldEstimate(old)) > 1); // half the prizes left in well under half the tickets
+  assert.ok(topPrizeFactor(2, 4, soldEstimate(young)) < 1);
+});
+
+test("age: a game with many top prizes relies on its own count, and sold share is capped", () => {
+  const big = { num: 5, name: "Big", price: 5, tops: [{ prize: 500, claimed: 500, total: 1000 }], soldPrior: 0.9 };
+  assert.ok(Math.abs(soldEstimate(big) - 0.5) < 0.01);
+  const done = { num: 6, name: "Done", price: 5, tops: [{ prize: 500, claimed: 999, total: 1000 }], soldPrior: 0.99 };
+  assert.equal(soldEstimate(done), 0.95);
+  assert.equal(topPrizeFactor(3, 3, 0.5), 0);
+});
+
+test("age: every real game gets a prior and a sane factor", () => {
+  const games = addSoldPriors(structuredClone(data.games));
+  for (const g of games) assert.ok(g.soldPrior >= 0 && g.soldPrior <= 1, `${g.num}`);
+  for (const a of games.map(analyze).filter(Boolean)) assert.ok(a.topFactor >= 0 && a.topFactor < 4, `${a.game.num} x${a.topFactor}`);
+});
+
+test("age: start date outranks game number when both are known", () => {
+  const mk = (num, launch, claimed, total) => ({ num, name: "G" + num, price: 5, launch, tops: [{ prize: 100000, claimed, total }] });
+  const old = Array.from({ length: 10 }, (_, i) => mk(100 + i, "2024-01-0" + (i % 9 + 1), 9, 10));
+  const fresh = Array.from({ length: 10 }, (_, i) => mk(200 + i, "2026-10-0" + (i % 9 + 1), 1, 10));
+  const reissue = mk(50, "2026-10-05", 0, 3); // low number, but only just went on sale
+  addSoldPriors([...old, ...fresh, reissue]);
+  assert.ok(reissue.soldPrior < 0.3, `${reissue.soldPrior}`);
 });

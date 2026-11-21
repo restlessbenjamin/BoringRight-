@@ -29,6 +29,8 @@ async function get(url) {
 
 const { asOf, games } = parseTopPrizesPage(await (await get(PAGE)).text());
 const odds = JSON.parse(await fs.readFile(new URL("odds.json", root), "utf8"));
+// Start dates as shown on each game's "More info" panel on galottery.com. A game not listed here is ordered by its number.
+const launch = JSON.parse(await fs.readFile(new URL("launch.json", root), "utf8"));
 await fs.mkdir(new URL("odds-img/", root), { recursive: true });
 
 const missing = [];
@@ -55,6 +57,7 @@ const out = {
     const o = odds[g.num];
     return {
       ...g,
+      launch: launch[g.num] || null,
       odds: o?.tiers?.length ? { overall: o.overall, tiers: o.tiers } : null,
       oddsImg: !o?.tiers?.length,
     };
